@@ -6,7 +6,9 @@ local use_cmi = minetest.global_exists("cmi")
 
 mobs = {
 	mod = "redo",
+	redo = "redo",
 	version = "20181005",
+	tag = "Gender",
 	intllib = S,
 	invis = minetest.global_exists("invisibility") and invisibility or {},
 }
@@ -857,16 +859,90 @@ local follow_holding = function(self, clicker)
 	return false
 end
 
+-- find if the 2 mating mobs are of different genders (puzzlecube)
+local function is_opposite_gender(self, mate)
+	print(dump(self))
+	print(dump(mate))
+	local is_opposite = false
+	local mother
+
+	-- check for old neuter gender mobs and just pick one
+	if self.gender == nil or mate.gender == nil then
+		if self.gender ~= nil then
+			if self.gender == "female" then
+				mother = self
+			end
+		elseif mate.gender ~= nil then
+			if mate.gender == "female" then
+				mother = mate
+			end
+		else
+			local s = random(0,1)
+			if s == 0 then
+				mother = self
+			else
+				mother = mate
+			end
+		end
+		is_opposite = true
+		return is_opposite, mother
+	end
+	print("self is a "..self.gender.." and mate is a "..mate.gender)
+	if self.gender ~= mate.gender then
+		is_opposite = true
+	end
+	if self.gender == "female" then
+		mother = self
+	elseif mate.gender == "female" then
+		mother = mate
+	else
+		minetest.log("info","Something is wrong, there is no mother!")
+	end
+	return is_opposite, mother
+end
+
+-- sets the gender of the entity (puzzlecube)
+local function set_gender(entity)
+	local s = random(0,1)
+	local g = nil
+	if s == 0 then
+		g = "female"
+	else
+		g = "male"
+	end
+	print(g)
+	entity.gender = g
+	print(entity.gender)
+	return entity.gender
+end
+
+-- Select texture from a heirarchy of textures (puzzlecube)
+local function select_texture(self, texture_list)
+	-- is there an index in the table labeled male and one labeled female
+	local are_mf_textures = false
+	if texture_list.male ~= nil and texture_list.female ~= nil then
+		are_mf_textures = true
+	end
+	local list = texture_list
+	if are_mf_textures == true then
+		list = list[self.gender]
+	end
+
+	-- select a texture from the list
+	local selector = random(1,#list)
+	local selection = list[selector]
+	return selection
+end
 
 -- find two animals of same type and breed if nearby and horny
 local breed = function(self)
 
-	-- child takes 240 seconds before growing into adult
+	-- child takes self.childhood seconds before growing into adult
 	if self.child == true then
 
 		self.hornytimer = self.hornytimer + 1
 
-		if self.hornytimer > 240 then
+		if self.hornytimer > self.childhood then
 
 			self.child = false
 			self.hornytimer = 0
@@ -890,6 +966,7 @@ local breed = function(self)
 					z = 0
 				})
 			end
+			minetest.log("info","Its now a "..self.gender)
 		end
 
 		return
@@ -898,11 +975,11 @@ local breed = function(self)
 	-- horny animal can mate for 40 seconds,
 	-- afterwards horny animal cannot mate again for 200 seconds
 	if self.horny == true
-	and self.hornytimer < 240 then
+	and self.hornytimer < self.childhood then
 
 		self.hornytimer = self.hornytimer + 1
 
-		if self.hornytimer >= 240 then
+		if self.hornytimer >= self.childhood then
 			self.hornytimer = 0
 			self.horny = false
 		end
@@ -910,7 +987,7 @@ local breed = function(self)
 
 	-- find another same animal who is also horny and mate if nearby
 	if self.horny == true
-	and self.hornytimer <= 40 then
+	and self.hornytimer <= self.max_hornytime then
 
 		local pos = self.object:get_pos()
 
@@ -927,10 +1004,14 @@ local breed = function(self)
 			-- check for same animal with different colour
 			local canmate = false
 
+			local are_opposite, mother
 			if ent then
 
+				are_opposite, mother = is_opposite_gender(self, ent)
 				if ent.name == self.name then
-					canmate = true
+					if are_opposite == true then
+						canmate = true
+					end
 				else
 					local entname = string.split(ent.name,":")
 					local selfname = string.split(self.name,":")
@@ -940,7 +1021,9 @@ local breed = function(self)
 						selfname = string.split(selfname[2],"_")
 
 						if entname[1] == selfname[1] then
-							canmate = true
+							if are_opposite == true then
+								canmate = true
+							end
 						end
 					end
 				end
@@ -949,18 +1032,20 @@ local breed = function(self)
 			if ent
 			and canmate == true
 			and ent.horny == true
-			and ent.hornytimer <= 40 then
+			and ent.hornytimer <= ent.max_hornytime then
 				num = num + 1
 			end
 
 			-- found your mate? then have a baby
 			if num > 1 then
 
-				self.hornytimer = 41
-				ent.hornytimer = 41
+				self.hornytimer = self.max_hornytime+1
+				ent.hornytimer = ent.max_hornytime+1
 
+				-- make it show
+				effect({x = pos.x, y = pos.y + 1, z = pos.z}, 10, "heart.png", 5, 6, 3, 0.3)
 				-- spawn baby
-				minetest.after(5, function(self, ent)
+				minetest.after(mother.birth_wait, function(self, ent)
 
 					if not self.object:get_luaentity() then
 						return
@@ -981,9 +1066,12 @@ local breed = function(self)
 					local ent2 = mob:get_luaentity()
 					local textures = self.base_texture
 
+					-- set baby gender
+					ent2.gender = set_gender(ent2)
+					minetest.log("info","Its a "..ent2.gender)
 					-- using specific child texture (if found)
 					if self.child_texture then
-						textures = self.child_texture[1]
+						textures = select_texture(self, self.child_texture)
 					end
 
 					-- and resize to half height
@@ -2309,7 +2397,7 @@ local falling = function(self, pos)
 end
 
 
--- is Took Ranks mod active?
+-- is Tool Ranks mod active?
 local tr = minetest.get_modpath("toolranks")
 
 -- deal damage and effects when mob punched
@@ -2428,7 +2516,7 @@ local mob_punch = function(self, hitter, tflp, tool_capabilities, dir)
 	if damage >= 1 then
 
 		-- weapon sounds
-		if weapon_def.sounds then
+		if weapon_def.sounds and type(weapon_def.sounds) == "table" then
 
 			local s = random(0, #weapon_def.sounds)
 
@@ -2646,6 +2734,11 @@ local mob_activate = function(self, staticdata, def, dtime)
 		return
 	end
 
+	-- set gender if not set
+	if self.gender == nil then
+		self.gender = set_gender(self)
+	end
+
 	-- load entity variables
 	local tmp = minetest.deserialize(staticdata)
 
@@ -2663,7 +2756,7 @@ local mob_activate = function(self, staticdata, def, dtime)
 			def.textures = {def.textures}
 		end
 
-		self.base_texture = def.textures and def.textures[random(1, #def.textures)]
+		self.base_texture = def.textures and select_texture(self, def.textures)--def.textures[random(1, #def.textures)]
 		self.base_mesh = def.mesh
 		self.base_size = self.visual_size
 		self.base_colbox = self.collisionbox
@@ -2685,7 +2778,11 @@ local mob_activate = function(self, staticdata, def, dtime)
 	-- specific texture if gotten
 	if self.gotten == true
 	and def.gotten_texture then
-		textures = def.gotten_texture
+		if type(def.gotten_texture) == "string" then
+			textures = def.gotten_texture
+		else
+			textures = select_texture(def.gotten_texture)
+		end
 	end
 
 	-- specific mesh if gotten
@@ -2703,7 +2800,7 @@ local mob_activate = function(self, staticdata, def, dtime)
 		}
 
 		if def.child_texture then
-			textures = def.child_texture[1]
+			textures = select_texture(def.child_texture)
 		end
 
 		colbox = {
@@ -2743,6 +2840,7 @@ local mob_activate = function(self, staticdata, def, dtime)
 	self.sounds.distance = self.sounds.distance or 10
 	self.textures = textures
 	self.mesh = mesh
+	self.gender = set_gender(self)
 	self.collisionbox = colbox
 	self.selectionbox = selbox
 	self.visual_size = vis_size
@@ -3042,6 +3140,9 @@ minetest.register_entity(name, {
 	replace_with = def.replace_with,
 	replace_offset = def.replace_offset or 0,
 	on_replace = def.on_replace,
+	childhood = def.childhood or 240,
+	max_hornytime = def.max_hornytime or 40,
+	birth_wait = def.birth_wait or 5,
 	timer = 0,
 	env_damage_timer = 0, -- only used when state = "attack"
 	tamed = false,
